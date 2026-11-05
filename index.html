@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Skybound — Flight Challenge</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      color: #fff;
+      font-family: system-ui, Segoe UI, sans-serif;
+      background: radial-gradient(ellipse at 50% 20%, #263b58, #101724 72%);
+    }
+    .game {
+      width: min(960px, 100%);
+      overflow: hidden;
+      border: 1px solid #ffffff35;
+      border-radius: 20px;
+      box-shadow: 0 24px 80px #0009;
+      background: #87c9e8;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      aspect-ratio: 3 / 2;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    .hint {
+      padding: 12px;
+      text-align: center;
+      color: #c9d8e8;
+      font-size: 13px;
+      letter-spacing: .04em;
+    }
+  </style>
+</head>
+<body>
+  <main class="game">
+    <canvas id="game" aria-label="Skybound flight game"></canvas>
+    <div class="hint">CLICK / TAP / SPACE TO FLY</div>
+  </main>
+
+  <script>
+    const canvas = document.querySelector("#game");
+    const ctx = canvas.getContext("2d");
+
+    const W = 960, H = 640, GROUND = 562;
+    const bird = { x: 220, y: 290, velocity: 0, radius: 17 };
+    let state = "ready";
+    let score = 0;
+    let best = Number(localStorage.getItem("skybound-best") || 0);
+    let pipes = [];
+    let lastTime = 0;
+    let elapsed = 0;
+    let groundOffset = 0;
+
+    function resize() {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    function resetGame() {
+      score = 0;
+      bird.y = 290;
+      bird.velocity = 0;
+      pipes = [{ x: 1030, center: 300 }];
+      state = "ready";
+    }
+
+    function startOrFlap() {
+      if (state === "over") resetGame();
+      if (state === "ready") state = "running";
+      bird.velocity = -535;
+    }
+
+    canvas.addEventListener("pointerdown", startOrFlap);
+    window.addEventListener("keydown", event => {
+      if (event.code === "Space" || event.code === "ArrowUp") {
+        event.preventDefault();
+        startOrFlap();
+      }
+    });
+
+    function endGame() {
+      state = "over";
+      if (score > best) {
+        best = score;
+        localStorage.setItem("skybound-best", best);
+      }
+    }
+
+    function update(dt) {
+      elapsed += dt;
+      if (state !== "running") return;
+
+      bird.velocity += 1650 * dt;
+      bird.y += bird.velocity * dt;
+      groundOffset = (groundOffset + 245 * dt) % 80;
+
+      for (const pipe of pipes) {
+        pipe.x -= 250 * dt;
+        if (!pipe.passed && pipe.x + 82 < bird.x) {
+          pipe.passed = true;
+          score++;
+        }
+      }
+
+      pipes = pipes.filter(pipe => pipe.x > -110);
+      if (pipes.length === 0 || pipes[pipes.length - 1].x < 650) {
+        pipes.push({
+          x: 1030,
+          center: 175 + Math.random() * 230
+        });
+      }
+
+      const r = bird.radius - 3;
+      if (bird.y - r < 0 || bird.y + r > GROUND) endGame();
+
+      for (const pipe of pipes) {
+        const gap = 184;
+        const gapTop = pipe.center - gap / 2;
+        const gapBottom = pipe.center + gap / 2;
+        const overlapsX = bird.x + r > pipe.x && bird.x - r < pipe.x + 82;
+        if (overlapsX && (bird.y - r < gapTop || bird.y + r > gapBottom)) {
+          endGame();
+        }
+      }
+    }
+
+    function roundedRect(x, y, w, h, radius) {
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, radius);
+    }
+
+    function drawCloud(x, y, scale, alpha) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = "#fff";
+      ctx.shadowColor = "#fff";
+      ctx.shadowBlur = 20;
+      ctx.beginPath();
+      ctx.ellipse(x, y, 42 * scale, 16 * scale, 0, 0, Math.PI * 2);
+      ctx.ellipse(x - 25 * scale, y + 3 * scale, 22 * scale, 12 * scale, 0, 0, Math.PI * 2);
+      ctx.ellipse(x + 18 * scale, y - 10 * scale, 25 * scale, 20 * scale, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawBackground() {
+      const sky = ctx.createLinearGradient(0, 0, 0, GROUND);
+      sky.addColorStop(0, "#2879ad");
+      sky.addColorStop(.52, "#71c3e6");
+      sky.addColorStop(1, "#d5eff4");
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, W, H);
+
+      const sun = ctx.createRadialGradient(745, 125, 8, 745, 125, 105);
+      sun.addColorStop(0, "#fff9d8dd");
+      sun.addColorStop(1, "#fff9d800");
+      ctx.fillStyle = sun;
+      ctx.fillRect(625, 5, 240, 240);
+
+      drawCloud(150 - (elapsed * 10) % 1100, 130, 1, .72);
+      drawCloud(540 - (elapsed * 7) % 1100, 220, .72, .55);
+      drawCloud(930 - (elapsed * 12) % 1100, 95, .82, .64);
+
+      // Layered distant ridges create a sense of depth.
+      ctx.fillStyle = "#92cbd1";
+      ctx.beginPath();
+      ctx.moveTo(0, 420);
+      ctx.lineTo(115, 290); ctx.lineTo(230, 415);
+      ctx.lineTo(390, 270); ctx.lineTo(570, 430);
+      ctx.lineTo(735, 310); ctx.lineTo(900, 425);
+      ctx.lineTo(960, 370); ctx.lineTo(960, GROUND);
+      ctx.lineTo(0, GROUND); ctx.fill();
+
+      ctx.fillStyle = "#5ba6b7";
+      ctx.beginPath();
+      ctx.moveTo(0, 465);
+      ctx.lineTo(180, 370); ctx.lineTo(330, 470);
+      ctx.lineTo(510, 355); ctx.lineTo(705, 470);
+      ctx.lineTo(860, 375); ctx.lineTo(960, 445);
+      ctx.lineTo(960, GROUND); ctx.lineTo(0, GROUND); ctx.fill();
+
+      // Tiny distant city silhouettes.
+      for (let i = 0; i < 19; i++) {
+        const x = i * 58 - (elapsed * 13) % 58;
+        const height = 28 + (i * 37 % 55);
+        ctx.fillStyle = i % 2 ? "#3d8297" : "#4b91a0";
+        ctx.fillRect(x, GROUND - height, 35, height);
+        ctx.fillStyle = "#c8e8d766";
+        for (let wy = GROUND - height + 10; wy < GROUND - 5; wy += 15) {
+          ctx.fillRect(x + 8, wy, 4, 5);
+          ctx.fillRect(x + 21, wy, 4, 5);
+        }
+      }
+    }
+
+    function drawPipe(pipe) {
+      const x = pipe.x, width = 82, gap = 184;
+      const topHeight = pipe.center - gap / 2;
+      const bottomY = pipe.center + gap / 2;
+
+      function section(y, h, capAtBottom) {
+        const gradient = ctx.createLinearGradient(x, 0, x + width, 0);
+        gradient.addColorStop(0, "#176f45");
+        gradient.addColorStop(.22, "#42ce76");
+        gradient.addColorStop(.68, "#26a956");
+        gradient.addColorStop(1, "#12633e");
+        ctx.fillStyle = gradient;
+        ctx.fillRect(x + 7, y, width - 14, h);
+        ctx.fillStyle = "#ffffff30";
+        ctx.fillRect(x + 17, y, 7, h);
+        ctx.fillStyle = "#093f2e55";
+        ctx.fillRect(x + width - 23, y, 8, h);
+
+        const capY = capAtBottom ? y + h - 24 : y;
+        const cap = ctx.createLinearGradient(x, 0, x + width, 0);
+        cap.addColorStop(0, "#155d3c");
+        cap.addColorStop(.25, "#55df80");
+        cap.addColorStop(.75, "#28aa58");
+        cap.addColorStop(1, "#124d36");
+        ctx.fillStyle = cap;
+        roundedRect(x, capY, width, 24, 5);
+        ctx.fill();
+        ctx.strokeStyle = "#0e653e";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      section(0, topHeight, true);
+      section(bottomY, GROUND - bottomY, false);
+    }
+
+    function drawBird() {
+      const bob = state === "ready" ? Math.sin(elapsed * 3) * 8 : 0;
+      const y = bird.y + bob;
+      const rotation = state === "running"
+        ? Math.max(-.45, Math.min(.8, bird.velocity / 850))
+        : -.08;
+
+      ctx.save();
+      ctx.translate(bird.x, y);
+      ctx.rotate(rotation);
+      ctx.shadowColor = "#16304a66";
+      ctx.shadowBlur = 12;
+      ctx.shadowOffsetY = 5;
+
+      const body = ctx.createLinearGradient(-18, -18, 19, 17);
+      body.addColorStop(0, "#fff7b5");
+      body.addColorStop(.5, "#ffc947");
+      body.addColorStop(1, "#ed8e2c");
+      ctx.fillStyle = body;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 21, 17, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.shadowColor = "transparent";
+      ctx.fillStyle = "#f4a62f";
+      ctx.beginPath();
+      ctx.ellipse(-8, 5 + Math.sin(elapsed * 17) * 2, 11, 7, -.35, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#fff";
+      ctx.beginPath(); ctx.arc(9, -6, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#18334b";
+      ctx.beginPath(); ctx.arc(11, -6, 2.5, 0, Math.PI * 2); ctx.fill();
+
+      ctx.fillStyle = "#f26b40";
+      ctx.beginPath();
+      ctx.moveTo(17, 0); ctx.lineTo(30, 4); ctx.lineTo(17, 8);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    function drawGround() {
+      const ground = ctx.createLinearGradient(0, GROUND, 0, H);
+      ground.addColorStop(0, "#d7bd75");
+      ground.addColorStop(.15, "#9d743e");
+      ground.addColorStop(1, "#4e493c");
+      ctx.fillStyle = ground;
+      ctx.fillRect(0, GROUND, W, H - GROUND);
+
+      ctx.fillStyle = "#72c75b";
+      ctx.fillRect(0, GROUND, W, 13);
+      ctx.fillStyle = "#b5ed78";
+      ctx.fillRect(0, GROUND, W, 4);
+
+      for (let x = -80 - groundOffset; x < W; x += 80) {
+        ctx.fillStyle = "#ffffff25";
+        ctx.beginPath();
+        ctx.moveTo(x, GROUND + 24);
+        ctx.lineTo(x + 38, GROUND + 24);
+        ctx.lineTo(x + 14, H);
+        ctx.lineTo(x - 24, H);
+        ctx.fill();
+      }
+    }
+
+    function drawTextPanel(title, subtitle) {
+      ctx.fillStyle = "#10243b88";
+      roundedRect(245, 180, 470, 190, 22);
+      ctx.fill();
+      ctx.textAlign = "center";
+      ctx.shadowColor = "#10243b88";
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = "#fff";
+      ctx.font = "800 42px system-ui, sans-serif";
+      ctx.fillText(title, W / 2, 245);
+      ctx.shadowBlur = 0;
+      ctx.font = "17px system-ui, sans-serif";
+      ctx.fillStyle = "#e5f5ff";
+      ctx.fillText(subtitle, W / 2, 286);
+      ctx.font = "600 14px system-ui, sans-serif";
+      ctx.fillStyle = "#c0e8f4";
+      ctx.fillText("CLICK, TAP, OR PRESS SPACE", W / 2, 326);
+    }
+
+    function draw() {
+      drawBackground();
+      for (const pipe of pipes) drawPipe(pipe);
+      drawGround();
+      drawBird();
+
+      ctx.textAlign = "center";
+      ctx.font = "800 48px system-ui, sans-serif";
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = "#17334a88";
+      ctx.strokeText(score, W / 2, 75);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(score, W / 2, 75);
+
+      ctx.textAlign = "left";
+      ctx.font = "600 15px system-ui, sans-serif";
+      ctx.fillStyle = "#ffffffdd";
+      ctx.fillText(`BEST  ${best}`, 24, 34);
+
+      if (state === "ready") drawTextPanel("SKYBOUND", "Thread the gates and see how far you can fly.");
+      if (state === "over") {
+        drawTextPanel("FLIGHT OVER", `Score: ${score}     •     Best: ${best}`);
+      }
+    }
+
+    function frame(time) {
+      const dt = Math.min((time - lastTime) / 1000 || 0, 0.033);
+      lastTime = time;
+      update(dt);
+      draw();
+      requestAnimationFrame(frame);
+    }
+
+    resetGame();
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>
